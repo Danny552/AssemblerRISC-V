@@ -1,6 +1,6 @@
 import json
 
-instField = "Assembler/Instructions.json"
+instField = "Instructions.json"
 
 with open(instField, "r") as file:
     insList = json.load(file)
@@ -153,6 +153,46 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
 
+    elif mnemonic in ["lui", "auipc"]:  # UType
+        opcode = insList[mnemonic][0]
+        rd = reg_to_num(parts[1])
+        imm = int(parts[2], 0)
+        line = (
+            to_bin(imm, 20) +
+            to_bin(rd, 5) +
+            opcode
+        )
+    
+    elif mnemonic in ["jal"]:  # JType
+        opcode = insList[mnemonic][0]
+        rd = reg_to_num(parts[1])
+        label = parts[2]
+        target = dictlabls[label]
+        offset = target - pc
+        imm = offset >> 1
+        imm_bin = to_bin(imm, 21)
+        line = (
+            imm_bin[0] +        
+            imm_bin[10:20] +    
+            imm_bin[9] +        
+            imm_bin[1:9] +      
+            to_bin(rd, 5) +
+            opcode
+        )
+    
+    elif mnemonic in ["jalr"]:  # IType jalr #CORREGIR
+        funct3, opcode = insList[mnemonic]
+        rd = reg_to_num(parts[1])
+        rs1 = reg_to_num(parts[2])
+        imm = int(parts[3], 0)
+        line = (
+            to_bin(imm, 12) +
+            to_bin(rs1, 5) +
+            funct3 +
+            to_bin(rd, 5) +
+            opcode
+        )
+
     elif mnemonic == "ecall":
         line = "00000000000000000000000001110011"
 
@@ -186,7 +226,7 @@ def assemble(instr, dictlabls, pc):
 # Example usage
 
 
-with open("Assembler\\program.asm", "r") as f:
+with open("program.asm", "r") as f:
     lines = [line.strip() for line in f if line.strip()]
 
 labels = firstPass(lines)
