@@ -147,9 +147,14 @@ def assemble(instr, dictlabls, pc):
         rs2 = reg_to_num(parts[2])
         label = parts[3]
         target = dictlabls[label]
+
         offset = target - pc
-        imm = offset >> 1
-        imm_bin = to_bin(imm, 13)
+
+        if offset % 2 != 0:
+            raise ValueError(f"Branch offset not aligned: {offset}")
+
+        imm_bin = to_bin(offset, 13)
+
         line = (
             imm_bin[0] +        # imm[12]
             imm_bin[2:8] +      # imm[10:5]
@@ -160,6 +165,7 @@ def assemble(instr, dictlabls, pc):
             imm_bin[1] +        # imm[11]
             opcode
         )
+
 
     elif mnemonic in ["lui", "auipc"]:  # UType
         opcode = insList[mnemonic][0]
@@ -234,6 +240,13 @@ def datafunc(instr, program_memory, data_labels, current_address):
                 program_memory.append(f"{byte:08b}")
             current_address += 4
 
+        elif mnemonic == ".dword":
+            val = int(value, 0)
+            for i in range(8):
+                byte = (val >> (8 * i)) & 0xFF
+                program_memory.append(f"{byte:08b}")
+            current_address += 8
+
         elif mnemonic == ".half":
             val = int(value, 0)
             for i in range(2):
@@ -259,34 +272,19 @@ def datafunc(instr, program_memory, data_labels, current_address):
                 current_address += 1
             program_memory.append("00000000")  # null terminator
             current_address += 1
+        elif mnemonic == ".space":
+            for i in range(int(value)):
+                byte = 0x0
+                program_memory.append(f"{byte:08b}")
+            current_address += int(value)
 
         else:
             raise ValueError(f"Unknown data directive: {mnemonic}")
 
     return current_address
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 with open("program.asm", "r") as f:
     lines = [line.strip() for line in f if line.strip()]
-
-
 
 labels = firstPass(lines)
 print("Labels:", labels)
@@ -316,5 +314,6 @@ for line in lines:
 
 
         pc += 4
+print(memory_labels)
 for byte in program_memory:
     print(byte)

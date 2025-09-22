@@ -1,11 +1,5 @@
-.data
-msg:    .asciiz "Hi"
-num1:   .word 15
-num2:   .half 25
-num3:   .byte 4
-
-.text
-main:
-    addi x1, x0, 5       # x1 = 5
-    addi x2, x0, 10      # x2 = 10
-    add  x3, x1, x2      # x3 = x1 + x2
+addi x3, x0, 5
+addi x4, x0, 5
+label:
+addi x5, x0, 2
+beq x3, x4, label
