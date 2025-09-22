@@ -22,6 +22,9 @@ abi_to_num = {
                 "t3": 28, "t4": 29, "t5": 30, "t6": 31,
 }
 
+program_memory = []
+memory_labels = {}
+
 def reg_to_num(reg: str) -> int:
     reg = reg.strip()
     if reg.startswith("x"):   # x0..x31
@@ -31,6 +34,7 @@ def reg_to_num(reg: str) -> int:
     else:
         raise ValueError(f"Unknown register: {reg}")
     
+
 def firstPass(lines):
     labels = {}
     pc = 0
@@ -39,17 +43,20 @@ def firstPass(lines):
         line = line.split("#")[0].strip()
         if not line:
             continue
-        #For stripping white lines AND comments
 
-        if line.endswith(":"):
+        if line.endswith(":"):  # label
             label = line[:-1]
             if label in labels:
                 raise ValueError(f"Invalid, duplicate identifier: {label}")
             labels[label] = pc
+        elif line.startswith(".word") or line.startswith(".half") or line.startswith(".byte") or line.startswith(".ascii") or line.startswith(".asciiz"):
+            continue
         else:
             pc += 4
 
     return labels
+
+
 
 def to_bin(val, bits):
     if val < 0:
@@ -57,13 +64,14 @@ def to_bin(val, bits):
     return format(val & ((1 << bits) - 1), f'0{bits}b')
 
 def assemble(instr, dictlabls, pc):
+
     parts = instr.replace(",", "").split()
     mnemonic = parts[0]
 
     if mnemonic in ["add", "sub", "xor", "or", "and", "sll", "srl", "sra", "slt", "sltu"]:  # RType
         funct7, funct3, opcode = insList[mnemonic]
         rd = reg_to_num(parts[1])
-        rs1 = reg_to_num(parts[2])
+        rs1 = reg_to_num(parts[2])  
         rs2 = reg_to_num(parts[3])
         line = (
             funct7 +
@@ -206,6 +214,56 @@ def assemble(instr, dictlabls, pc):
     return line
 
 
+def datafunc(instr, program_memory, data_labels, current_address):
+    parts = instr.replace(":", "").split(maxsplit=2)
+    label, mnemonic = parts[0], parts[1]
+
+    # Save label -> starting address
+    data_labels[label] = current_address
+
+    # Handle possible multiple values: .word 1,2,3
+    values = parts[2].split(",")
+
+    for value in values:
+        value = value.strip()
+
+        if mnemonic == ".word":
+            val = int(value, 0)
+            for i in range(4):
+                byte = (val >> (8 * i)) & 0xFF
+                program_memory.append(f"{byte:08b}")
+            current_address += 4
+
+        elif mnemonic == ".half":
+            val = int(value, 0)
+            for i in range(2):
+                byte = (val >> (8 * i)) & 0xFF
+                program_memory.append(f"{byte:08b}")
+            current_address += 2
+
+        elif mnemonic == ".byte":
+            val = int(value, 0)
+            program_memory.append(f"{val & 0xFF:08b}")
+            current_address += 1
+
+        elif mnemonic == ".ascii":
+            string = value.strip('"')
+            for ch in string:
+                program_memory.append(f"{ord(ch):08b}")
+                current_address += 1
+
+        elif mnemonic == ".asciiz":
+            string = value.strip('"')
+            for ch in string:
+                program_memory.append(f"{ord(ch):08b}")
+                current_address += 1
+            program_memory.append("00000000")  # null terminator
+            current_address += 1
+
+        else:
+            raise ValueError(f"Unknown data directive: {mnemonic}")
+
+    return current_address
 
 
 
@@ -223,22 +281,40 @@ def assemble(instr, dictlabls, pc):
 
 
 
-
-# Example usage
 
 
 with open("program.asm", "r") as f:
     lines = [line.strip() for line in f if line.strip()]
 
+
+
 labels = firstPass(lines)
 print("Labels:", labels)
 
 # Assemble
+in_data = False
+in_text = False
 pc = 0
-for line in lines:
-    if line.endswith(":"): 
-        continue
-    binary = assemble(line, labels,pc)
-    print(binary)
-    pc += 4
+current_address = 0
 
+for line in lines:
+    if line.startswith(".data"):
+        in_data, in_text = True, False
+        continue
+    elif line.startswith(".text"):
+        in_data, in_text = False, True
+        continue
+
+    if in_data:
+        current_address = datafunc(line, program_memory, memory_labels, current_address)
+
+    elif in_text:
+        if line.endswith(":"):
+            continue
+        binary = assemble(line, labels, pc)
+        print (binary)
+
+
+        pc += 4
+for byte in program_memory:
+    print(byte)
