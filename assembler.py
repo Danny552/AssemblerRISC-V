@@ -180,11 +180,12 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
     
-    elif mnemonic in ["jalr"]:  # IType jalr #CORREGIR
+    elif mnemonic in ["jalr"]:  # IType jalr
         funct3, opcode = insList[mnemonic]
         rd = reg_to_num(parts[1])
-        rs1 = reg_to_num(parts[2])
-        imm = int(parts[3], 0)
+        imm_str, rs1_str = parts[2].split("(")
+        imm = int(imm_str, 0)
+        rs1 = reg_to_num(rs1_str[:-1])  # strip ")"
         line = (
             to_bin(imm, 12) +
             to_bin(rs1, 5) +
