@@ -293,7 +293,7 @@ print("Labels:", labels)
 
 # Assemble
 in_data = False
-in_text = False
+in_text = True
 pc = 0
 current_address = 0
 
