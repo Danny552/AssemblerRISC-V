@@ -27,7 +27,7 @@ memory_labels = {}
 
 def reg_to_num(reg: str) -> int:
     reg = reg.strip()
-    if reg.startswith("x"):   # x0..x31
+    if reg.startswith("x") and int(reg[1:]) < 32:   # x0..x31
         return int(reg[1:])
     elif reg in abi_to_num:   # ABI name
         return abi_to_num[reg]
@@ -85,7 +85,7 @@ def assemble(instr, dictlabls, pc):
     if mnemonic in ["add", "sub", "xor", "or", "and", "sll", "srl", "sra", "slt", "sltu"]:  # RType
         funct7, funct3, opcode = insList[mnemonic]
         rd = reg_to_num(parts[1])
-        rs1 = reg_to_num(parts[2])  
+        rs1 = reg_to_num(parts[2])
         rs2 = reg_to_num(parts[3])
         line = (
             funct7 +
@@ -101,6 +101,8 @@ def assemble(instr, dictlabls, pc):
         rd = reg_to_num(parts[1])
         rs = reg_to_num(parts[2])
         imm = int(parts[3], 0)
+        if not -2048 <= imm <= 2047:
+            raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
         line = (
             to_bin(imm, 12) +
             to_bin(rs, 5) +
@@ -114,22 +116,24 @@ def assemble(instr, dictlabls, pc):
         rd = reg_to_num(parts[1])
         imm_str, rs1_str = parts[2].split("(")
         imm = int(imm_str, 0)
+        if not -2048 <= imm <= 2047:
+            raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
         rs1 = reg_to_num(rs1_str[:-1])  # strip ")"
         line = (
-            to_bin(imm, 12) + " - " +
-            to_bin(rs1, 5) + " - " +
-            funct3 + " - " +
-            to_bin(rd, 5) + " - " +
+            to_bin(imm, 12) +
+            to_bin(rs1, 5) +
+            funct3 +
+            to_bin(rd, 5) +
             opcode
         )
 
     elif mnemonic in ["slli", "srli", "srai"]:  # IShiftType
-        funct3, opcode = insList[mnemonic]
+        funct7, funct3, opcode = insList[mnemonic]
         rd = reg_to_num(parts[1])
         rs1 = reg_to_num(parts[2])
         shamt = int(parts[3], 0)
         line = (
-            "0000000" +   # funct7 for shifts is handled in JSON normally
+            funct7 +
             to_bin(shamt, 5) +
             to_bin(rs1, 5) +
             funct3 +
@@ -142,6 +146,8 @@ def assemble(instr, dictlabls, pc):
         rs2 = reg_to_num(parts[1])
         imm_str, rs1_str = parts[2].split("(")
         imm = int(imm_str, 0)
+        if not -2048 <= imm <= 2047:
+            raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
         rs1 = reg_to_num(rs1_str[:-1])  # strip ")"
         imm_bin = to_bin(imm, 12)
         imm_hi = imm_bin[:7]
@@ -160,6 +166,8 @@ def assemble(instr, dictlabls, pc):
         rs1 = reg_to_num(parts[1])
         rs2 = reg_to_num(parts[2])
         label = parts[3]
+        if label not in dictlabls:
+            raise ValueError(f"Undefined label: {label}")
         target = dictlabls[label]
         offset = target - pc
 
@@ -184,6 +192,8 @@ def assemble(instr, dictlabls, pc):
         opcode = insList[mnemonic][0]
         rd = reg_to_num(parts[1])
         imm = int(parts[2], 0)
+        if not -2048 <= imm <= 2047:
+            raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
         line = (
             to_bin(imm, 20)+
             to_bin(rd, 5) +
@@ -194,9 +204,13 @@ def assemble(instr, dictlabls, pc):
         opcode = insList[mnemonic][0]
         rd = reg_to_num(parts[1])
         label = parts[2]
+        if label not in dictlabls:
+            raise ValueError(f"Undefined label: {label}")
         target = dictlabls[label]
         offset = target - pc
         imm = offset >> 1
+        if not -2048 <= imm <= 2047:
+            raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
         imm_bin = to_bin(imm, 21)
         line = (
             imm_bin[0] +        
@@ -212,6 +226,8 @@ def assemble(instr, dictlabls, pc):
         rd = reg_to_num(parts[1])
         imm_str, rs1_str = parts[2].split("(")
         imm = int(imm_str, 0)
+        if not -2048 <= imm <= 2047:
+            raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
         rs1 = reg_to_num(rs1_str[:-1])  # strip ")"
         line = (
             to_bin(imm, 12) +
@@ -328,6 +344,8 @@ def assemble(instr, dictlabls, pc):
     
     elif mnemonic == "j":
         label = parts[1]
+        if label not in dictlabls:
+            raise ValueError(f"Undefined label: {label}")
         return assemble(f"jal x0, {label}", dictlabls, pc)
     
     elif mnemonic == "jal" and parts[1] not in abi_to_num and parts[1] in dictlabls:

@@ -1,3 +1,1 @@
-hola:
-li x3, 34
-beqz x3, hola
+srli x1, x2, 31
