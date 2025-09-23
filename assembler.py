@@ -190,7 +190,7 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
     
-    elif mnemonic in ["jal"]:  # JType
+    elif mnemonic in ["jal"] and parts[1] in abi_to_num:  # JType
         opcode = insList[mnemonic][0]
         rd = reg_to_num(parts[1])
         label = parts[2]
@@ -207,7 +207,7 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
     
-    elif mnemonic in ["jalr"]:  # IType jalr
+    elif mnemonic in ["jalr"] and lparts != 2:  # IType jalr
         funct3, opcode = insList[mnemonic]
         rd = reg_to_num(parts[1])
         imm_str, rs1_str = parts[2].split("(")
@@ -220,6 +220,130 @@ def assemble(instr, dictlabls, pc):
             to_bin(rd, 5) +
             opcode
         )
+
+    # Pseudo-instructions, not la, l{b,h,w}, s{b,h,w}, call offset nor tail offset
+    elif mnemonic == "nop":
+        return assemble("addi x0, x0, 0", dictlabls, pc)
+    
+    elif mnemonic == "li":
+        rd = parts[1]
+        imm = int(parts[2], 0)
+        if -2048 <= imm <= 2047:
+            return assemble(f"addi {rd}, x0, {imm}", dictlabls, pc)
+        elif -2147483648 <= imm <= 2147483647:
+            upper = (imm + (1 << 11)) >> 12
+            lower = imm - (upper << 12)
+            return assemble(f"addi {rd}, {rd}, {lower}", dictlabls, pc + 4)
+        else:
+            raise ValueError(f"Immediate out of range for li: {imm}")
+    
+    elif mnemonic == "mv":
+        rd = parts[1]
+        rs = parts[2]
+        return assemble(f"addi {rd}, {rs}, 0", dictlabls, pc)
+    
+    elif mnemonic == "not":
+        rd = parts[1]
+        rs = parts[2]
+        return assemble(f"xori {rd}, {rs}, -1", dictlabls, pc)
+    
+    elif mnemonic == "neg":
+        rd = parts[1]
+        rs = parts[2]
+        return assemble(f"sub {rd}, x0, {rs}", dictlabls, pc)
+    
+    elif mnemonic == "seqz":
+        rd = parts[1]
+        rs = parts[2]
+        return assemble(f"sltiu {rd}, {rs}, 1", dictlabls, pc)
+    
+    elif mnemonic == "snez":
+        rd = parts[1]
+        rs = parts[2]
+        return assemble(f"sltu {rd}, x0, {rs}", dictlabls, pc)
+    
+    elif mnemonic == "sltz":
+        rd = parts[1]
+        rs = parts[2]
+        return assemble(f"slt {rd}, {rs}, 0", dictlabls, pc)
+    
+    elif mnemonic == "sgtz":
+        rd = parts[1]
+        rs = parts[2]
+        return assemble(f"slt {rd}, 0, {rs}", dictlabls, pc)
+    
+    elif mnemonic == "beqz":
+        rs = parts[1]
+        label = parts[2]
+        return assemble(f"beq {rs}, x0, {label}", dictlabls, pc)
+    
+    elif mnemonic == "bnez":
+        rs = parts[1]
+        label = parts[2]
+        return assemble(f"bne {rs}, x0, {label}", dictlabls, pc)
+    
+    elif mnemonic == "blez":
+        rs = parts[1]
+        label = parts[2]
+        return assemble(f"bge x0, {rs}, {label}", dictlabls, pc)
+    
+    elif mnemonic == "bgez":
+        rs = parts[1]
+        label = parts[2]
+        return assemble(f"bge {rs}, x0, {label}", dictlabls, pc)
+    
+    elif mnemonic == "bltz":
+        rs = parts[1]
+        label = parts[2]
+        return assemble(f"blt {rs}, x0, {label}", dictlabls, pc)
+    
+    elif mnemonic == "bgtz":
+        rs = parts[1]
+        label = parts[2]
+        return assemble(f"blt x0, {rs}, {label}", dictlabls, pc)
+    
+    elif mnemonic == "bgt":
+        rs1 = parts[1]
+        rs2 = parts[2]
+        label = parts[3]
+        return assemble(f"blt {rs2}, {rs1}, {label}", dictlabls, pc)
+    
+    elif mnemonic == "ble":
+        rs1 = parts[1]
+        rs2 = parts[2]
+        label = parts[3]
+        return assemble(f"bge {rs2}, {rs1}, {label}", dictlabls, pc)
+    
+    elif mnemonic == "bgtu":
+        rs1 = parts[1]
+        rs2 = parts[2]
+        label = parts[3]
+        return assemble(f"bltu {rs2}, {rs1}, {label}", dictlabls, pc)
+    
+    elif mnemonic == "bleu":
+        rs1 = parts[1]
+        rs2 = parts[2]
+        label = parts[3]
+        return assemble(f"bgeu {rs2}, {rs1}, {label}", dictlabls, pc)
+    
+    elif mnemonic == "j":
+        label = parts[1]
+        return assemble(f"jal x0, {label}", dictlabls, pc)
+    
+    elif mnemonic == "jal" and parts[1] not in abi_to_num and parts[1] in dictlabls:
+        rs = parts[1]
+        return assemble(f"jalr x0, {label}", dictlabls, pc)
+    
+    elif mnemonic == "jr":
+        rs = parts[1]
+        return assemble(f"jalr x0, {rs}, 0", dictlabls, pc)
+    
+    elif mnemonic == "jalr" and parts[1] in abi_to_num and lparts == 2:
+        rs = parts[1]
+        return assemble(f"jalr x1, {rs}, 0", dictlabls, pc)
+    
+    elif mnemonic == "ret":
+        return assemble("jalr x0, x1, 0", dictlabls, pc)
 
     elif mnemonic == "ecall":
         line = "00000000000000000000000001110011"
@@ -324,7 +448,7 @@ for line in lines:
         if line.endswith(":"):
             continue
         binary = assemble(line, labels, pc)
-        print (binary)
+        print(binary)
 
 
         pc += 4
