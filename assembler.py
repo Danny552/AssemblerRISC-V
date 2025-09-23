@@ -40,9 +40,12 @@ def firstPass(lines):
     pc = 0
 
     for line in lines:
-        line = line.split("#")[0].strip()
+        line = line.split("#")[0].strip()  # Remove comments
         if not line:
             continue
+        
+        if len(line.split("#")[0].strip().split()) != 1 and "," not in line: #Label with spaces, not allowed
+            raise ValueError(f"Invalid syntax: {line}, not space allowed in labels")
 
         if line.endswith(":"):  # label
             label = line[:-1]
@@ -65,7 +68,18 @@ def to_bin(val, bits):
 
 def assemble(instr, dictlabls, pc):
 
+    parts = instr.split()
+    lparts = len(parts)
+    if "," in parts[0]:
+        raise ValueError("Syntax error: unexpected comma")
+    if "," in parts[lparts - 1]:
+        raise ValueError("Syntax error: unexpected comma")
+    for i in range(1, lparts - 1):
+        if "," not in parts[i]:
+            raise ValueError("Syntax error: missing comma")
+
     parts = instr.replace(",", "").split()
+    lparts = len(parts)
     mnemonic = parts[0]
 
     if mnemonic in ["add", "sub", "xor", "or", "and", "sll", "srl", "sra", "slt", "sltu"]:  # RType
@@ -147,7 +161,6 @@ def assemble(instr, dictlabls, pc):
         rs2 = reg_to_num(parts[2])
         label = parts[3]
         target = dictlabls[label]
-
         offset = target - pc
 
         if offset % 2 != 0:
@@ -172,7 +185,7 @@ def assemble(instr, dictlabls, pc):
         rd = reg_to_num(parts[1])
         imm = int(parts[2], 0)
         line = (
-            to_bin(imm, 20) +
+            to_bin(imm, 20)+
             to_bin(rd, 5) +
             opcode
         )
@@ -287,6 +300,7 @@ with open("program.asm", "r") as f:
     lines = [line.strip() for line in f if line.strip()]
 
 labels = firstPass(lines)
+
 print("Labels:", labels)
 
 # Assemble
