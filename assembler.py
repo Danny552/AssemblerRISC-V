@@ -1,4 +1,35 @@
+"""
+RISC-V Assembler (RV32I subset + basic pseudo-instructions)
+Universidad Tecnológica de Pereira - 2025-2
+
+
+Authors:
+- Daniel Alejandro Henao 1114150552
+- Juan Camilo Cano 1137059546
+
+
+Description:
+This assembler takes a RISC-V assembly source file (program.asm) and translates it
+into binary and hex machine code. It supports:
+- RV32I base instructions (R, I, S, B, U, J types)
+- Basic pseudo-instructions (e.g., nop, li, mv)
+- Data section directives (.word, .half, .byte, .ascii, .asciiz, .string, .space)
+- Proper memory alignment for multi-byte data
+- Label resolution in both .text and .data sections
+
+
+Limitations:
+- Only RV32I integer instructions
+- Pseudo-instructions are partially implemented (e.g., la, call, tail not included)
+- Branch/jump offsets limited by instruction format
+
+
+Usage:
+python assembler.py program.asm program.hex program.bin
+(expects a file named `program.asm` in the same directory)
+"""
 import json
+import sys
 
 instField = "Instructions.json"
 
@@ -26,6 +57,21 @@ program_memory = []
 memory_labels = {}
 
 def reg_to_num(reg: str) -> int:
+    """
+    Convert a register name (ABI or xN form) to its numeric index.
+
+
+    Args:
+    reg (str): Register name (e.g., "x5", "a0", "sp")
+
+
+    Returns:
+    int: Register number (0–31)
+
+
+    Raises:
+    ValueError: If the register name is invalid
+    """
     reg = reg.strip()
     if reg.startswith("x") and int(reg[1:]) < 32:   # x0..x31
         return int(reg[1:])
@@ -36,38 +82,103 @@ def reg_to_num(reg: str) -> int:
     
 
 def firstPass(lines):
+    """
+    First assembler pass.
+    - Identifies labels in the .text section
+    - Tracks program counter (PC) for each label
+    - Ignores .data section directives (they are processed separately)
+
+
+    Args:
+    lines (list[str]): Source lines
+
+
+    Returns:
+    dict: Label -> PC mapping
+"""
     labels = {}
     pc = 0
+    in_text = False
 
     for line in lines:
-        line = line.split("#")[0].strip()  # Remove comments
+        # Remove comments
+        line = line.split("#")[0].strip()
         if not line:
             continue
-        
-        if len(line.split("#")[0].strip().split()) != 1 and "," not in line: #Label with spaces, not allowed
-            raise ValueError(f"Invalid syntax: {line}, not space allowed in labels")
 
-        if line.endswith(":"):  # label
-            label = line[:-1]
-            if label in labels:
-                raise ValueError(f"Invalid, duplicate identifier: {label}")
-            labels[label] = pc
-        elif line.startswith(".word") or line.startswith(".half") or line.startswith(".byte") or line.startswith(".ascii") or line.startswith(".asciiz"):
+        # Section switches
+        if line.startswith(".data"):
+            in_text = False
             continue
-        else:
+        elif line.startswith(".text"):
+            in_text = True
+            pc = 0  # reset pc at .text start
+            continue
+
+        # Inline label (e.g. myvar: .word 15 or loop: addi x1,x1,1)
+        if ":" in line:
+            label, rest = line.split(":", 1)
+            label = label.strip()
+            if label in labels:
+                raise ValueError(f"Duplicate identifier: {label}")
+            if in_text:
+                labels[label] = pc # only track PC for .text labels
+
+            rest = rest.strip()
+            if not rest:  # pure label line
+                continue
+            line = rest  # process the remainder as instruction/directive
+
+        # Instructions
+        if in_text:
             pc += 4
+        # Data: do nothing, handled separately later
 
     return labels
 
 
 
+
 def to_bin(val, bits):
+    """
+    Convert signed/unsigned integer to binary string of given width.
+    Handles two's complement for negative numbers.
+    """
     if val < 0:
         val = (1 << bits) + val
     return format(val & ((1 << bits) - 1), f'0{bits}b')
 
 def assemble(instr, dictlabls, pc):
+    """
+    Assemble a single RISC-V instruction into a 32-bit binary string.
 
+    Args:
+        instr (str): The assembly instruction as a string (may include comments).
+                     Example: "addi a0, a1, 10" or "beq a0, a1, loop"
+        dictlabls (dict): Mapping from label names to addresses (used for branches/jumps).
+        pc (int): Current program counter (instruction address in bytes).
+
+    Returns:
+        str or None: The 32-bit binary encoding of the instruction as a string of '0'/'1',
+                     or None if the input line was empty/comment only.
+
+    Raises:
+        ValueError: If the instruction format is invalid, a label is undefined, or an
+                    immediate/offset is out of range.
+
+    Notes:
+        - Supports base RV32I instructions: R, I, S, B, U, J types.
+        - Implements a subset of pseudo-instructions by recursively expanding them
+          (e.g., `nop`, `mv`, `neg`, `ret`, etc.).
+        - Comments in the input line (after '#') are automatically ignored.
+    """
+
+    # --- Step 1: Strip comments and whitespace ---
+    instr = instr.split("#")[0].strip()
+    if not instr:
+        return None  # ignore empty/comment-only lines
+
+    # --- Step 2: Quick syntax validation for commas ---
     parts = instr.split()
     lparts = len(parts)
     if "," in parts[0]:
@@ -78,11 +189,15 @@ def assemble(instr, dictlabls, pc):
         if "," not in parts[i]:
             raise ValueError("Syntax error: missing comma")
 
+    # --- Step 3: Normalize instruction tokens (remove commas) ---
     parts = instr.replace(",", "").split()
     lparts = len(parts)
     mnemonic = parts[0]
 
-    if mnemonic in ["add", "sub", "xor", "or", "and", "sll", "srl", "sra", "slt", "sltu"]:  # RType
+    # --------------------------------------------------------------------------
+    # R-type: add, sub, xor, or, and, sll, srl, sra, slt, sltu
+    # --------------------------------------------------------------------------
+    if mnemonic in ["add", "sub", "xor", "or", "and", "sll", "srl", "sra", "slt", "sltu"]:
         funct7, funct3, opcode = insList[mnemonic]
         rd = reg_to_num(parts[1])
         rs1 = reg_to_num(parts[2])
@@ -96,7 +211,10 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
 
-    elif mnemonic in ["addi", "xori", "ori", "andi", "slti", "sltiu"]:  # IType
+    # --------------------------------------------------------------------------
+    # I-type arithmetic/logical: addi, xori, ori, andi, slti, sltiu
+    # --------------------------------------------------------------------------
+    elif mnemonic in ["addi", "xori", "ori", "andi", "slti", "sltiu"]:
         funct3, opcode = insList[mnemonic]
         rd = reg_to_num(parts[1])
         rs = reg_to_num(parts[2])
@@ -111,14 +229,17 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
 
-    elif mnemonic in ["lb", "lh", "lw", "lbu", "lhu"]:  # Load IType
+    # --------------------------------------------------------------------------
+    # Loads: lb, lh, lw, lbu, lhu  (format: lw rd, imm(rs1))
+    # --------------------------------------------------------------------------
+    elif mnemonic in ["lb", "lh", "lw", "lbu", "lhu"]:
         funct3, opcode = insList[mnemonic]
         rd = reg_to_num(parts[1])
         imm_str, rs1_str = parts[2].split("(")
         imm = int(imm_str, 0)
         if not -2048 <= imm <= 2047:
             raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
-        rs1 = reg_to_num(rs1_str[:-1])  # strip ")"
+        rs1 = reg_to_num(rs1_str[:-1])  # remove ')'
         line = (
             to_bin(imm, 12) +
             to_bin(rs1, 5) +
@@ -127,7 +248,10 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
 
-    elif mnemonic in ["slli", "srli", "srai"]:  # IShiftType
+    # --------------------------------------------------------------------------
+    # I-type shifts: slli, srli, srai
+    # --------------------------------------------------------------------------
+    elif mnemonic in ["slli", "srli", "srai"]:
         funct7, funct3, opcode = insList[mnemonic]
         rd = reg_to_num(parts[1])
         rs1 = reg_to_num(parts[2])
@@ -141,27 +265,31 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
 
-    elif mnemonic in ["sb", "sh", "sw"]:  # SType
+    # --------------------------------------------------------------------------
+    # Stores: sb, sh, sw  (format: sw rs2, imm(rs1))
+    # --------------------------------------------------------------------------
+    elif mnemonic in ["sb", "sh", "sw"]:
         funct3, opcode = insList[mnemonic]
         rs2 = reg_to_num(parts[1])
         imm_str, rs1_str = parts[2].split("(")
         imm = int(imm_str, 0)
         if not -2048 <= imm <= 2047:
             raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
-        rs1 = reg_to_num(rs1_str[:-1])  # strip ")"
+        rs1 = reg_to_num(rs1_str[:-1])
         imm_bin = to_bin(imm, 12)
-        imm_hi = imm_bin[:7]
-        imm_lo = imm_bin[7:]
         line = (
-            imm_hi +
+            imm_bin[:7] +
             to_bin(rs2, 5) +
             to_bin(rs1, 5) +
             funct3 +
-            imm_lo +
+            imm_bin[7:] +
             opcode
         )
 
-    elif mnemonic in ["beq", "bne", "blt", "bge", "bltu", "bgeu"]:  # BType
+    # --------------------------------------------------------------------------
+    # Branches: beq, bne, blt, bge, bltu, bgeu
+    # --------------------------------------------------------------------------
+    elif mnemonic in ["beq", "bne", "blt", "bge", "bltu", "bgeu"]:
         funct3, opcode = insList[mnemonic]
         rs1 = reg_to_num(parts[1])
         rs2 = reg_to_num(parts[2])
@@ -170,12 +298,9 @@ def assemble(instr, dictlabls, pc):
             raise ValueError(f"Undefined label: {label}")
         target = dictlabls[label]
         offset = target - pc
-
         if offset % 2 != 0:
             raise ValueError(f"Branch offset not aligned: {offset}")
-
         imm_bin = to_bin(offset, 13)
-
         line = (
             imm_bin[0] +        # imm[12]
             imm_bin[2:8] +      # imm[10:5]
@@ -187,48 +312,72 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
 
-
-    elif mnemonic in ["lui", "auipc"]:  # UType
+    # --------------------------------------------------------------------------
+    # U-type: lui, auipc
+    # --------------------------------------------------------------------------
+    elif mnemonic in ["lui", "auipc"]:
         opcode = insList[mnemonic][0]
         rd = reg_to_num(parts[1])
         imm = int(parts[2], 0)
-        if not -2048 <= imm <= 2047:
+        if not 0 <= imm <= 1048575:
             raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
         line = (
-            to_bin(imm, 20)+
+            to_bin(imm, 20) +
             to_bin(rd, 5) +
             opcode
         )
-    
-    elif mnemonic in ["jal"] and parts[1] in abi_to_num:  # JType
+
+    # --------------------------------------------------------------------------
+    # J-type: jal (jal rd, label) or (jal label → expands to jal ra, label)
+    # --------------------------------------------------------------------------
+    elif mnemonic == "jal":
         opcode = insList[mnemonic][0]
-        rd = reg_to_num(parts[1])
-        label = parts[2]
+        if lparts == 3:
+            rd = reg_to_num(parts[1])
+            label = parts[2]
+        elif lparts == 2:
+            rd = 1  # ra
+            label = parts[1]
+        else:
+            raise ValueError(f"Invalid jal format: {instr}")
         if label not in dictlabls:
             raise ValueError(f"Undefined label: {label}")
         target = dictlabls[label]
         offset = target - pc
-        imm = offset >> 1
-        if not -2048 <= imm <= 2047:
-            raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
-        imm_bin = to_bin(imm, 21)
+        imm_bin = to_bin(offset, 21)
         line = (
-            imm_bin[0] +        
-            imm_bin[10:20] +    
-            imm_bin[9] +        
-            imm_bin[1:9] +      
+            imm_bin[0] +        # imm[20]
+            imm_bin[10:20] +    # imm[10:1]
+            imm_bin[9] +        # imm[11]
+            imm_bin[1:9] +      # imm[19:12]
             to_bin(rd, 5) +
             opcode
         )
-    
-    elif mnemonic in ["jalr"] and lparts != 2:  # IType jalr
+
+    # --------------------------------------------------------------------------
+    # I-type Jumps: jalr
+    # Supports formats:
+    #   jalr rd, rs1, imm
+    #   jalr rd, imm(rs1)
+    #   jalr rs            (pseudo → jalr x1, rs, 0)
+    # --------------------------------------------------------------------------
+    elif mnemonic == "jalr":
         funct3, opcode = insList[mnemonic]
-        rd = reg_to_num(parts[1])
-        imm_str, rs1_str = parts[2].split("(")
-        imm = int(imm_str, 0)
-        if not -2048 <= imm <= 2047:
-            raise ValueError(f"Immediate out of range for {mnemonic}: {imm}")
-        rs1 = reg_to_num(rs1_str[:-1])  # strip ")"
+        if lparts == 4:
+            rd = reg_to_num(parts[1])
+            rs1 = reg_to_num(parts[2])
+            imm = int(parts[3], 0)
+        elif lparts == 3:
+            rd = reg_to_num(parts[1])
+            imm_str, rs1_str = parts[2].split("(")
+            imm = int(imm_str, 0)
+            rs1 = reg_to_num(rs1_str[:-1])
+        elif lparts == 2:
+            rd = 1
+            rs1 = reg_to_num(parts[1])
+            imm = 0
+        else:
+            raise ValueError(f"Invalid jalr format: {instr}")
         line = (
             to_bin(imm, 12) +
             to_bin(rs1, 5) +
@@ -237,145 +386,93 @@ def assemble(instr, dictlabls, pc):
             opcode
         )
 
-    # Pseudo-instructions, not la, l{b,h,w}, s{b,h,w}, call offset nor tail offset
+    # --------------------------------------------------------------------------
+    # Pseudo-instructions (expanded recursively into base instructions)
+    # --------------------------------------------------------------------------
     elif mnemonic == "nop":
         return assemble("addi x0, x0, 0", dictlabls, pc)
-    
-    elif mnemonic == "li":
-        rd = parts[1]
-        imm = int(parts[2], 0)
-        if -2048 <= imm <= 2047:
-            return assemble(f"addi {rd}, x0, {imm}", dictlabls, pc)
-        elif -2147483648 <= imm <= 2147483647:
-            upper = (imm + (1 << 11)) >> 12
-            lower = imm - (upper << 12)
-            return assemble(f"addi {rd}, {rd}, {lower}", dictlabls, pc + 4)
-        else:
-            raise ValueError(f"Immediate out of range for li: {imm}")
-    
     elif mnemonic == "mv":
-        rd = parts[1]
-        rs = parts[2]
-        return assemble(f"addi {rd}, {rs}, 0", dictlabls, pc)
-    
+        return assemble(f"addi {parts[1]}, {parts[2]}, 0", dictlabls, pc)
     elif mnemonic == "not":
-        rd = parts[1]
-        rs = parts[2]
-        return assemble(f"xori {rd}, {rs}, -1", dictlabls, pc)
-    
+        return assemble(f"xori {parts[1]}, {parts[2]}, -1", dictlabls, pc)
     elif mnemonic == "neg":
-        rd = parts[1]
-        rs = parts[2]
-        return assemble(f"sub {rd}, x0, {rs}", dictlabls, pc)
-    
+        return assemble(f"sub {parts[1]}, x0, {parts[2]}", dictlabls, pc)
     elif mnemonic == "seqz":
-        rd = parts[1]
-        rs = parts[2]
-        return assemble(f"sltiu {rd}, {rs}, 1", dictlabls, pc)
-    
+        return assemble(f"sltiu {parts[1]}, {parts[2]}, 1", dictlabls, pc)
     elif mnemonic == "snez":
-        rd = parts[1]
-        rs = parts[2]
-        return assemble(f"sltu {rd}, x0, {rs}", dictlabls, pc)
-    
+        return assemble(f"sltu {parts[1]}, x0, {parts[2]}", dictlabls, pc)
     elif mnemonic == "sltz":
-        rd = parts[1]
-        rs = parts[2]
-        return assemble(f"slt {rd}, {rs}, 0", dictlabls, pc)
-    
+        return assemble(f"slt {parts[1]}, {parts[2]}, 0", dictlabls, pc)
     elif mnemonic == "sgtz":
-        rd = parts[1]
-        rs = parts[2]
-        return assemble(f"slt {rd}, 0, {rs}", dictlabls, pc)
-    
+        return assemble(f"slt {parts[1]}, 0, {parts[2]}", dictlabls, pc)
     elif mnemonic == "beqz":
-        rs = parts[1]
-        label = parts[2]
-        return assemble(f"beq {rs}, x0, {label}", dictlabls, pc)
-    
+        return assemble(f"beq {parts[1]}, x0, {parts[2]}", dictlabls, pc)
     elif mnemonic == "bnez":
-        rs = parts[1]
-        label = parts[2]
-        return assemble(f"bne {rs}, x0, {label}", dictlabls, pc)
-    
+        return assemble(f"bne {parts[1]}, x0, {parts[2]}", dictlabls, pc)
     elif mnemonic == "blez":
-        rs = parts[1]
-        label = parts[2]
-        return assemble(f"bge x0, {rs}, {label}", dictlabls, pc)
-    
+        return assemble(f"bge x0, {parts[1]}, {parts[2]}", dictlabls, pc)
     elif mnemonic == "bgez":
-        rs = parts[1]
-        label = parts[2]
-        return assemble(f"bge {rs}, x0, {label}", dictlabls, pc)
-    
+        return assemble(f"bge {parts[1]}, x0, {parts[2]}", dictlabls, pc)
     elif mnemonic == "bltz":
-        rs = parts[1]
-        label = parts[2]
-        return assemble(f"blt {rs}, x0, {label}", dictlabls, pc)
-    
+        return assemble(f"blt {parts[1]}, x0, {parts[2]}", dictlabls, pc)
     elif mnemonic == "bgtz":
-        rs = parts[1]
-        label = parts[2]
-        return assemble(f"blt x0, {rs}, {label}", dictlabls, pc)
-    
+        return assemble(f"blt x0, {parts[1]}, {parts[2]}", dictlabls, pc)
     elif mnemonic == "bgt":
-        rs1 = parts[1]
-        rs2 = parts[2]
-        label = parts[3]
-        return assemble(f"blt {rs2}, {rs1}, {label}", dictlabls, pc)
-    
+        return assemble(f"blt {parts[2]}, {parts[1]}, {parts[3]}", dictlabls, pc)
     elif mnemonic == "ble":
-        rs1 = parts[1]
-        rs2 = parts[2]
-        label = parts[3]
-        return assemble(f"bge {rs2}, {rs1}, {label}", dictlabls, pc)
-    
+        return assemble(f"bge {parts[2]}, {parts[1]}, {parts[3]}", dictlabls, pc)
     elif mnemonic == "bgtu":
-        rs1 = parts[1]
-        rs2 = parts[2]
-        label = parts[3]
-        return assemble(f"bltu {rs2}, {rs1}, {label}", dictlabls, pc)
-    
+        return assemble(f"bltu {parts[2]}, {parts[1]}, {parts[3]}", dictlabls, pc)
     elif mnemonic == "bleu":
-        rs1 = parts[1]
-        rs2 = parts[2]
-        label = parts[3]
-        return assemble(f"bgeu {rs2}, {rs1}, {label}", dictlabls, pc)
-    
+        return assemble(f"bgeu {parts[2]}, {parts[1]}, {parts[3]}", dictlabls, pc)
     elif mnemonic == "j":
-        label = parts[1]
-        if label not in dictlabls:
-            raise ValueError(f"Undefined label: {label}")
-        return assemble(f"jal x0, {label}", dictlabls, pc)
-    
-    elif mnemonic == "jal" and parts[1] not in abi_to_num and parts[1] in dictlabls:
-        rs = parts[1]
-        return assemble(f"jalr x0, {label}", dictlabls, pc)
-    
+        return assemble(f"jal x0, {parts[1]}", dictlabls, pc)
     elif mnemonic == "jr":
-        rs = parts[1]
-        return assemble(f"jalr x0, {rs}, 0", dictlabls, pc)
-    
-    elif mnemonic == "jalr" and parts[1] in abi_to_num and lparts == 2:
-        rs = parts[1]
-        return assemble(f"jalr x1, {rs}, 0", dictlabls, pc)
-    
+        return assemble(f"jalr x0, {parts[1]}, 0", dictlabls, pc)
     elif mnemonic == "ret":
         return assemble("jalr x0, x1, 0", dictlabls, pc)
 
+    # --------------------------------------------------------------------------
+    # System instructions
+    # --------------------------------------------------------------------------
     elif mnemonic == "ecall":
         line = "00000000000000000000000001110011"
-
     elif mnemonic == "ebreak":
         line = "00000000000100000000000001110011"
-
     else:
         raise ValueError(f"Unsupported instruction: {mnemonic}")
 
     return line
 
 
+
+def align(program_memory, current_address, alignment):
+    """Pad with 0s until current_address is a multiple of alignment."""
+    while current_address % alignment != 0:
+        program_memory.append("00000000")
+        current_address += 1
+    return current_address
+
+
 def datafunc(instr, program_memory, data_labels, current_address):
+    """
+    Process a data directive (.word, .half, .byte, .ascii, .asciiz, .string, .space).
+    Updates program memory and assigns addresses to labels.
+
+
+    Args:
+    instr (str): A single line from the .data section
+    program_memory (list[str]): List of binary strings (8 bits each)
+    data_labels (dict): Label -> memory address mapping
+    current_address (int): Current memory pointer
+
+
+    Returns:
+    int: Updated memory address after processing this directive
+"""
+    instr = instr.split("#")[0].strip()  # strip comments
+    if not instr:
+        return None 
     parts = instr.replace(":", "").split(maxsplit=2)
     label, mnemonic = parts[0], parts[1]
 
@@ -389,20 +486,15 @@ def datafunc(instr, program_memory, data_labels, current_address):
         value = value.strip()
 
         if mnemonic == ".word":
+            current_address = align(program_memory, current_address, 4)
             val = int(value, 0)
             for i in range(4):
                 byte = (val >> (8 * i)) & 0xFF
                 program_memory.append(f"{byte:08b}")
             current_address += 4
 
-        elif mnemonic == ".dword":
-            val = int(value, 0)
-            for i in range(8):
-                byte = (val >> (8 * i)) & 0xFF
-                program_memory.append(f"{byte:08b}")
-            current_address += 8
-
         elif mnemonic == ".half":
+            current_address = align(program_memory, current_address, 2)
             val = int(value, 0)
             for i in range(2):
                 byte = (val >> (8 * i)) & 0xFF
@@ -420,17 +512,17 @@ def datafunc(instr, program_memory, data_labels, current_address):
                 program_memory.append(f"{ord(ch):08b}")
                 current_address += 1
 
-        elif mnemonic == ".asciiz":
+        elif mnemonic in [".asciiz", ".string"]:
             string = value.strip('"')
             for ch in string:
                 program_memory.append(f"{ord(ch):08b}")
                 current_address += 1
             program_memory.append("00000000")  # null terminator
             current_address += 1
+
         elif mnemonic == ".space":
             for i in range(int(value)):
-                byte = 0x0
-                program_memory.append(f"{byte:08b}")
+                program_memory.append("00000000")
             current_address += int(value)
 
         else:
@@ -438,38 +530,66 @@ def datafunc(instr, program_memory, data_labels, current_address):
 
     return current_address
 
-with open("program.asm", "r") as f:
-    lines = [line.strip() for line in f if line.strip()]
 
-labels = firstPass(lines)
+def main():
+    if len(sys.argv) != 4:
+        print("Usage: python assembler.py program.asm program.hex program.bin")
+        sys.exit(1)
 
-print("Labels:", labels)
+    asm_file, hex_file, bin_file = sys.argv[1], sys.argv[2], sys.argv[3]
 
-# Assemble
-in_data = False
-in_text = True
-pc = 0
-current_address = 0
+    # Read source program
+    with open(asm_file, "r") as f:
+        lines = [line.strip() for line in f if line.strip()]
 
-for line in lines:
-    if line.startswith(".data"):
-        in_data, in_text = True, False
-        continue
-    elif line.startswith(".text"):
-        in_data, in_text = False, True
-        continue
+    # First pass: collect labels
+    labels = firstPass(lines)
 
-    if in_data:
-        current_address = datafunc(line, program_memory, memory_labels, current_address)
+    in_data = False
+    in_text = True
+    pc = 0
+    current_address = 0
+    binary_output = []
 
-    elif in_text:
-        if line.endswith(":"):
+    for line in lines:
+        line = line.split("#")[0].strip()
+        if not line:
             continue
-        binary = assemble(line, labels, pc)
-        print(binary)
+        if line.startswith(".data"):
+            in_data, in_text = True, False
+            continue
+        elif line.startswith(".text"):
+            in_data, in_text = False, True
+            continue
+
+        if in_data:
+            current_address = datafunc(line, program_memory, memory_labels, current_address)
+
+        elif in_text:
+            if line.endswith(":"):
+                continue
+            binary = assemble(line, labels, pc)
+            binary_output.append(binary)
+            pc += 4
+
+    # ===== Write outputs =====
+    with open(bin_file, "w") as bf:
+        # Write binary instructions
+        for b in binary_output:
+            bf.write(b + "\n")
+        # Write binary data
+        for b in program_memory:
+            bf.write(b + "\n")
+
+    with open(hex_file, "w") as hf:
+        # Convert binary to hex
+        for b in binary_output:
+            hf.write(f"{int(b, 2):08x}\n")
+        for b in program_memory:
+            hf.write(f"{int(b, 2):02x}\n")
+
+    print(f"Assembly complete. Output -> {hex_file}, {bin_file}")
 
 
-        pc += 4
-print(memory_labels)
-for byte in program_memory:
-    print(byte)
+if __name__ == "__main__":
+    main()
