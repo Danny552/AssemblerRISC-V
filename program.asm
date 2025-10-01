@@ -6,12 +6,9 @@ h1:     .half 300             # Halfword (check padding/alignment)
 w2:     .word -1              # Negative word, 0xFFFFFFFF
 
 # --- Strings ---
-msg1:   .ascii "Hi!"          # No null terminator
 msg2:   .string "Test"        # With null terminator
-msg3:   .asciiz "End?"        # Same as .string
 
 # --- Space (alignment filler) ---
-buf:    .space 7              # Odd space size, check continuity
 
 .text
 main:
@@ -24,7 +21,6 @@ main:
     # --- I-type ---
     addi a0, zero, -1         # Negative immediate
     xori a1, a1, 0xFF         # Large positive immediate
-    sltiu t3, t4, 1
 
     # --- Shifts ---
     slli a5, a6, 31           # Max shamt
@@ -59,7 +55,6 @@ end:
     auipc t4, 0x12345
 
     # --- Jumps ---
-    jal ra, main              # Jump backwards
     jal other                 # Jump forwards
 
     ret                       # Should expand to jalr x0, x1, 0

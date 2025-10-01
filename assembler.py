@@ -66,7 +66,7 @@ def reg_to_num(reg: str) -> int:
 
 
     Returns:
-    int: Register number (0–31)
+    int: Register number (0-31)
 
 
     Raises:
@@ -98,7 +98,7 @@ def firstPass(lines):
 """
     labels = {}
     pc = 0
-    in_text = False
+    in_text = True
 
     for line in lines:
         # Remove comments
@@ -115,7 +115,6 @@ def firstPass(lines):
             pc = 0  # reset pc at .text start
             continue
 
-        # Inline label (e.g. myvar: .word 15 or loop: addi x1,x1,1)
         if ":" in line:
             label, rest = line.split(":", 1)
             label = label.strip()
@@ -469,7 +468,7 @@ def datafunc(instr, program_memory, data_labels, current_address):
 
     Returns:
     int: Updated memory address after processing this directive
-"""
+    """
     instr = instr.split("#")[0].strip()  # strip comments
     if not instr:
         return None 
@@ -479,53 +478,47 @@ def datafunc(instr, program_memory, data_labels, current_address):
     # Save label -> starting address
     data_labels[label] = current_address
 
-    # Handle possible multiple values: .word 1,2,3
-    values = parts[2].split(",")
-
-    for value in values:
-        value = value.strip()
-
-        if mnemonic == ".word":
+    if mnemonic == ".word":
             current_address = align(program_memory, current_address, 4)
-            val = int(value, 0)
+            val = int(parts[2], 0)
             for i in range(4):
                 byte = (val >> (8 * i)) & 0xFF
                 program_memory.append(f"{byte:08b}")
             current_address += 4
 
-        elif mnemonic == ".half":
+    elif mnemonic == ".half":
             current_address = align(program_memory, current_address, 2)
-            val = int(value, 0)
+            val = int(parts[2], 0)
             for i in range(2):
                 byte = (val >> (8 * i)) & 0xFF
                 program_memory.append(f"{byte:08b}")
             current_address += 2
 
-        elif mnemonic == ".byte":
-            val = int(value, 0)
+    elif mnemonic == ".byte":
+            val = int(parts[2], 0)
             program_memory.append(f"{val & 0xFF:08b}")
             current_address += 1
 
-        elif mnemonic == ".ascii":
-            string = value.strip('"')
+    elif mnemonic == ".ascii":
+            string = parts[2].strip('"')
             for ch in string:
                 program_memory.append(f"{ord(ch):08b}")
                 current_address += 1
 
-        elif mnemonic in [".asciiz", ".string"]:
-            string = value.strip('"')
+    elif mnemonic in [".asciiz", ".string"]:
+            string = parts[2].strip('"')
             for ch in string:
                 program_memory.append(f"{ord(ch):08b}")
                 current_address += 1
             program_memory.append("00000000")  # null terminator
             current_address += 1
 
-        elif mnemonic == ".space":
-            for i in range(int(value)):
+    elif mnemonic == ".space":
+            for i in range(int(parts[2])):
                 program_memory.append("00000000")
-            current_address += int(value)
+            current_address += int(parts[2])
 
-        else:
+    else:
             raise ValueError(f"Unknown data directive: {mnemonic}")
 
     return current_address
